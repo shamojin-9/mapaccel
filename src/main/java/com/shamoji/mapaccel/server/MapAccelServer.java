@@ -27,7 +27,7 @@ import java.util.Set;
 public final class MapAccelServer {
     private final MovementTracker movementTracker = new MovementTracker();
     private final PredictiveChunkPlanner planner = new PredictiveChunkPlanner();
-    private final GpuTerrainBackend gpuBackend = GpuTerrainBackend.create();
+    private GpuTerrainBackend gpuBackend;
     private final SurfacePreviewService previewService = new SurfacePreviewService();
     private final DirtyChunkTracker dirtyTracker = new DirtyChunkTracker();
     private final RegionSnapshotCache snapshotCache = new RegionSnapshotCache();
@@ -171,7 +171,8 @@ public final class MapAccelServer {
     }
 
     private void gpuPrecompute(ServerLevel level, List<ChunkPos> plan) {
-        if (!gpuBackend.isAvailable()) {
+        GpuTerrainBackend backend = gpuBackend();
+        if (!backend.isAvailable()) {
             return;
         }
         int budget = pressureBudget(MapAccelConfig.GPU_PRECOMPUTE_CHUNKS_PER_TICK.get(), 32);
@@ -191,12 +192,13 @@ public final class MapAccelServer {
             batch.add(pos);
             computed++;
         }
-        gpuBackend.warmupBatch(level, batch);
+        backend.warmupBatch(level, batch);
         gpuWarmupsWindow += batch.size();
     }
 
     private void warmupLoginArea(ServerLevel level, ChunkPos center) {
-        if (!gpuBackend.isAvailable()) {
+        GpuTerrainBackend backend = gpuBackend();
+        if (!backend.isAvailable()) {
             return;
         }
         int radius = MapAccelConfig.LOGIN_GPU_WARMUP_RADIUS.get();
@@ -212,9 +214,9 @@ public final class MapAccelServer {
                 }
             }
         }
-        gpuBackend.warmupBatch(level, batch);
+        backend.warmupBatch(level, batch);
         gpuWarmupsWindow += batch.size();
-        MapAccel.LOGGER.info("MapAccel login GPU warmup: chunks={} center={},{} backend={}", batch.size(), center.x, center.z, gpuBackend.name());
+        MapAccel.LOGGER.info("MapAccel login GPU warmup: chunks={} center={},{} backend={}", batch.size(), center.x, center.z, backend.name());
     }
 
     private int adaptiveBudget(MovementTracker.Prediction prediction) {
@@ -266,7 +268,8 @@ public final class MapAccelServer {
         int elapsedTicks = Math.max(1, serverTick - lastLogTick);
         double elapsedSeconds = elapsedTicks / 20.0D;
         if (MapAccelConfig.LOG_CHUNK_REQUESTS.get()) {
-            GpuTerrainBackend.GpuStats gpuStats = gpuBackend.snapshotAndReset();
+            GpuTerrainBackend backend = gpuBackend();
+            GpuTerrainBackend.GpuStats gpuStats = backend.snapshotAndReset();
             DirtyChunkTracker.DirtySummary dirtySummary = dirtyTracker.summary();
             MapAccel.LOGGER.info(
                     "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
@@ -286,7 +289,7 @@ public final class MapAccelServer {
                     snapshotCache.size(),
                     snapshotHitWindow,
                     gpuWarmupsWindow,
-                    gpuBackend.name(),
+                    backend.name(),
                     gpuStats.computeRequests(),
                     gpuStats.computedChunks(),
                     String.format("%.2f", gpuStats.computeMillis()),
@@ -318,5 +321,12 @@ public final class MapAccelServer {
         snapshotHitWindow = 0;
         activePlayersWindow = 0;
         maxSpeedWindow = 0.0D;
+    }
+
+    private GpuTerrainBackend gpuBackend() {
+        if (gpuBackend == null) {
+            gpuBackend = GpuTerrainBackend.create();
+        }
+        return gpuBackend;
     }
 }

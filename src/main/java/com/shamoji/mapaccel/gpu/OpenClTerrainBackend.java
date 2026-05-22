@@ -4,6 +4,9 @@ import com.shamoji.mapaccel.MapAccel;
 import com.shamoji.mapaccel.config.MapAccelConfig;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.ModList;
+import net.minecraftforge.fml.loading.FMLEnvironment;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.opencl.CL;
@@ -73,6 +76,11 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
     static GpuTerrainBackend createOrDisabled() {
         if (!MapAccelConfig.ENABLE_OPENCL_BACKEND.get()) {
             return DisabledGpuTerrainBackend.withReason("OpenCL disabled by config");
+        }
+        if (MapAccelConfig.DISABLE_OPENCL_WITH_EMBEDDIUM.get()
+                && FMLEnvironment.dist == Dist.CLIENT
+                && (ModList.get().isLoaded("embeddium") || ModList.get().isLoaded("rubidium"))) {
+            return DisabledGpuTerrainBackend.withReason("OpenCL disabled: Embeddium compatibility mode");
         }
         try {
             ensureOpenClCreated();

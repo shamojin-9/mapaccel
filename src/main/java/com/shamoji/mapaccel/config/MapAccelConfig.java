@@ -30,6 +30,7 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.IntValue BAN_THRESHOLD;
     public static final ForgeConfigSpec.BooleanValue AUTO_BAN;
     public static final ForgeConfigSpec.BooleanValue ENABLE_OPENCL_BACKEND;
+    public static final ForgeConfigSpec.BooleanValue DISABLE_OPENCL_WITH_EMBEDDIUM;
     public static final ForgeConfigSpec.IntValue LOG_INTERVAL_SECONDS;
     public static final ForgeConfigSpec.BooleanValue LOG_CHUNK_REQUESTS;
     public static final ForgeConfigSpec.BooleanValue LOG_RESOURCE_SUMMARY;
@@ -68,6 +69,7 @@ public final class MapAccelConfig {
 
         builder.push("gpu");
         ENABLE_OPENCL_BACKEND = builder.comment("Use OpenCL for predictive terrain height precomputation when a GPU device is available.").define("enableOpenClBackend", true);
+        DISABLE_OPENCL_WITH_EMBEDDIUM = builder.comment("Disable the OpenCL backend on clients when Embeddium/Rubidium is loaded to avoid LWJGL/OpenGL initialization conflicts.").define("disableOpenClWithEmbeddium", true);
         builder.pop();
 
         builder.push("logging");
