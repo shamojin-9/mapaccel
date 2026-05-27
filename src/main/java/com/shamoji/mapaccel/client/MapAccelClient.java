@@ -8,5 +8,6 @@ public final class MapAccelClient {
 
     public static void init() {
         MinecraftForge.EVENT_BUS.register(new ClientMetricsReporter());
+        MinecraftForge.EVENT_BUS.register(new CreativeFlightFovStabilizer());
     }
 }

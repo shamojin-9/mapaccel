@@ -19,12 +19,18 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.DoubleValue OVERLOAD_TPS_THRESHOLD;
     public static final ForgeConfigSpec.IntValue SURFACE_PREVIEW_CHUNKS_PER_TICK;
     public static final ForgeConfigSpec.IntValue LOGIN_GPU_WARMUP_RADIUS;
+    public static final ForgeConfigSpec.IntValue LOGIN_GRACE_TICKS;
+    public static final ForgeConfigSpec.IntValue LOGIN_RAMP_TICKS;
     public static final ForgeConfigSpec.IntValue STRUCTURE_CACHE_CHANGE_THRESHOLD;
     public static final ForgeConfigSpec.IntValue SAMPLE_TICKS;
     public static final ForgeConfigSpec.IntValue VELOCITY_MEMORY_TICKS;
     public static final ForgeConfigSpec.DoubleValue VELOCITY_MEMORY_MIN_SPEED;
     public static final ForgeConfigSpec.DoubleValue HIGH_SPEED_BLOCKS_PER_TICK;
     public static final ForgeConfigSpec.BooleanValue CLIENT_ASSIST;
+    public static final ForgeConfigSpec.IntValue CLIENT_ASSIST_PREVIEW_CHUNKS_PER_TICK;
+    public static final ForgeConfigSpec.IntValue CLIENT_ASSIST_MAX_BATCH_CHUNKS;
+    public static final ForgeConfigSpec.IntValue CLIENT_ASSIST_MIN_FREE_MEMORY_MB;
+    public static final ForgeConfigSpec.IntValue CLIENT_ASSIST_MIN_FPS;
     public static final ForgeConfigSpec.IntValue VALIDATOR_COUNT;
     public static final ForgeConfigSpec.IntValue TRUST_PENALTY;
     public static final ForgeConfigSpec.IntValue BAN_THRESHOLD;
@@ -34,6 +40,7 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.IntValue LOG_INTERVAL_SECONDS;
     public static final ForgeConfigSpec.BooleanValue LOG_CHUNK_REQUESTS;
     public static final ForgeConfigSpec.BooleanValue LOG_RESOURCE_SUMMARY;
+    public static final ForgeConfigSpec.BooleanValue STABILIZE_CREATIVE_FLIGHT_FOV;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -46,12 +53,14 @@ public final class MapAccelConfig {
         MAX_PLAN_CHUNKS = builder.comment("Candidate cap while slow or medium speed.").defineInRange("maxPlanChunks", 768, 64, 100000);
         HIGH_SPEED_PLAN_CHUNKS = builder.comment("Candidate cap at high speed; keeps long flights from flooding planning work.").defineInRange("highSpeedPlanChunks", 384, 64, 100000);
         CHUNKS_PER_TICK = builder.comment("Server chunk preload budget per tick per player.").defineInRange("chunksPerTick", 4, 1, 64);
-        HIGH_SPEED_CHUNKS_PER_TICK = builder.comment("Maximum preload budget per tick per player at high speed.").defineInRange("highSpeedChunksPerTick", 16, 1, 256);
-        GPU_PRECOMPUTE_CHUNKS_PER_TICK = builder.comment("GPU terrain preview computations per tick per player, independent from server chunk load requests.").defineInRange("gpuPrecomputeChunksPerTick", 128, 0, 1024);
-        MAX_SYNC_CHUNKS_PER_SECOND = builder.comment("Global synchronous chunk generation budget per second. Lower values reduce server stalls.").defineInRange("maxSyncChunksPerSecond", 80, 1, 2000);
+        HIGH_SPEED_CHUNKS_PER_TICK = builder.comment("Maximum preload budget per tick per player at high speed.").defineInRange("highSpeedChunksPerTick", 12, 1, 256);
+        GPU_PRECOMPUTE_CHUNKS_PER_TICK = builder.comment("GPU terrain preview computations per tick per player, independent from server chunk load requests.").defineInRange("gpuPrecomputeChunksPerTick", 128, 0, 2048);
+        MAX_SYNC_CHUNKS_PER_SECOND = builder.comment("Global synchronous chunk generation budget per second. Lower values reduce server stalls.").defineInRange("maxSyncChunksPerSecond", 64, 1, 2000);
         OVERLOAD_TPS_THRESHOLD = builder.comment("Reduce preload pressure when measured server TPS drops below this value.").defineInRange("overloadTpsThreshold", 17.0D, 1.0D, 20.0D);
-        SURFACE_PREVIEW_CHUNKS_PER_TICK = builder.comment("Seed-based preview computations per tick for normal ungenerated chunks.").defineInRange("surfacePreviewChunksPerTick", 96, 0, 2048);
-        LOGIN_GPU_WARMUP_RADIUS = builder.comment("GPU preview radius around a player when they join or enter a world.").defineInRange("loginGpuWarmupRadius", 8, 0, 64);
+        SURFACE_PREVIEW_CHUNKS_PER_TICK = builder.comment("Seed-based preview computations per tick for normal ungenerated chunks.").defineInRange("surfacePreviewChunksPerTick", 48, 0, 2048);
+        LOGIN_GPU_WARMUP_RADIUS = builder.comment("GPU preview radius around a player when they join or enter a world. Set to 0 to avoid join-time stalls.").defineInRange("loginGpuWarmupRadius", 0, 0, 64);
+        LOGIN_GRACE_TICKS = builder.comment("Ticks after login before predictive synchronous chunk generation starts.").defineInRange("loginGraceTicks", 40, 0, 1200);
+        LOGIN_RAMP_TICKS = builder.comment("Ticks after the grace period used to gradually ramp chunk generation budget.").defineInRange("loginRampTicks", 100, 0, 2400);
         STRUCTURE_CACHE_CHANGE_THRESHOLD = builder.comment("Dirty change score that marks a chunk as a large structure/snapshot candidate.").defineInRange("structureCacheChangeThreshold", 128, 1, 100000);
         SAMPLE_TICKS = builder.comment("Movement samples used for average speed.").defineInRange("sampleTicks", 60, 10, 400);
         VELOCITY_MEMORY_TICKS = builder.comment("Ticks to keep the last strong movement vector after a temporary stop.").defineInRange("velocityMemoryTicks", 80, 0, 400);
@@ -61,6 +70,10 @@ public final class MapAccelConfig {
 
         builder.push("cooperativeSecurity");
         CLIENT_ASSIST = builder.comment("Ask installed clients for hash assistance and validation.").define("clientAssist", true);
+        CLIENT_ASSIST_PREVIEW_CHUNKS_PER_TICK = builder.comment("Preview chunks per server tick that can be offloaded to connected MapAccel clients. These are cache hints only; the server still performs official worldgen.").defineInRange("clientAssistPreviewChunksPerTick", 64, 0, 2048);
+        CLIENT_ASSIST_MAX_BATCH_CHUNKS = builder.comment("Maximum preview chunks sent to one assisting client in a single packet.").defineInRange("clientAssistMaxBatchChunks", 64, 1, 256);
+        CLIENT_ASSIST_MIN_FREE_MEMORY_MB = builder.comment("Minimum reported free memory for a client to receive preview-assist work.").defineInRange("clientAssistMinFreeMemoryMb", 1024, 0, 262144);
+        CLIENT_ASSIST_MIN_FPS = builder.comment("Minimum reported FPS for a client to receive preview-assist work.").defineInRange("clientAssistMinFps", 45, 0, 1000);
         VALIDATOR_COUNT = builder.comment("Number of validator clients requested for each challenge.").defineInRange("validatorCount", 2, 0, 8);
         TRUST_PENALTY = builder.comment("Trust points removed on mismatched hash.").defineInRange("trustPenalty", 25, 1, 1000);
         BAN_THRESHOLD = builder.comment("Trust score at or below this value can trigger an automatic ban.").defineInRange("banThreshold", -100, -10000, 100);
@@ -76,6 +89,10 @@ public final class MapAccelConfig {
         LOG_INTERVAL_SECONDS = builder.comment("Seconds between MapAccel summary log lines.").defineInRange("logIntervalSeconds", 5, 1, 300);
         LOG_CHUNK_REQUESTS = builder.comment("Log predictive chunk request totals.").define("logChunkRequests", true);
         LOG_RESOURCE_SUMMARY = builder.comment("Log client resource reports.").define("logResourceSummary", true);
+        builder.pop();
+
+        builder.push("client");
+        STABILIZE_CREATIVE_FLIGHT_FOV = builder.comment("Keep FOV stable while creative flight speed mods repeatedly adjust flying speed.").define("stabilizeCreativeFlightFov", true);
         builder.pop();
 
         SPEC = builder.build();

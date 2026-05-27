@@ -11,7 +11,8 @@ public final class ClientMetricsReporter {
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || Minecraft.getInstance().player == null) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (event.phase != TickEvent.Phase.END || minecraft.player == null || minecraft.getConnection() == null) {
             return;
         }
         ticks++;
@@ -22,7 +23,7 @@ public final class ClientMetricsReporter {
         int freeMemoryMb = (int) ((runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()) / 1024L / 1024L);
         int maxMemoryMb = (int) (runtime.maxMemory() / 1024L / 1024L);
         int usedMemoryMb = (int) ((runtime.totalMemory() - runtime.freeMemory()) / 1024L / 1024L);
-        int fps = Minecraft.getInstance().getFps();
+        int fps = minecraft.getFps();
         MapAccelNetwork.sendToServer(new ClientMetricsPacket(freeMemoryMb, maxMemoryMb, usedMemoryMb, fps));
     }
 }

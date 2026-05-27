@@ -1,6 +1,12 @@
 package com.shamoji.mapaccel.server;
 
+import net.minecraft.server.level.ServerPlayer;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -23,6 +29,25 @@ public final class ClientResourceLedger {
     public int score(UUID playerId) {
         ClientResource resource = get(playerId);
         return resource.freeMemoryMb + resource.fpsEstimate * 16;
+    }
+
+    public List<ServerPlayer> rankedAssistClients(Collection<ServerPlayer> players, int serverTick, int minFreeMemoryMb, int minFps) {
+        List<ServerPlayer> candidates = new ArrayList<>();
+        for (ServerPlayer player : players) {
+            ClientResource resource = get(player.getUUID());
+            if (resource == ClientResource.UNKNOWN) {
+                continue;
+            }
+            if (serverTick - resource.serverTick > 140) {
+                continue;
+            }
+            if (resource.freeMemoryMb < minFreeMemoryMb || resource.fpsEstimate < minFps) {
+                continue;
+            }
+            candidates.add(player);
+        }
+        candidates.sort(Comparator.comparingInt((ServerPlayer player) -> score(player.getUUID())).reversed());
+        return candidates;
     }
 
     public ResourceSummary summary(int serverTick) {

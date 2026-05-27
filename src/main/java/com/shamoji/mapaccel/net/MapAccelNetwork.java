@@ -8,7 +8,7 @@ import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.simple.SimpleChannel;
 
 public final class MapAccelNetwork {
-    private static final String PROTOCOL = "1";
+    private static final String PROTOCOL = "2";
     private static int packetId;
     private static SimpleChannel channel;
 
@@ -26,6 +26,8 @@ public final class MapAccelNetwork {
             channel.registerMessage(packetId++, ClientMetricsPacket.class, ClientMetricsPacket::encode, ClientMetricsPacket::decode, ClientMetricsPacket::handle);
             channel.registerMessage(packetId++, HashChallengePacket.class, HashChallengePacket::encode, HashChallengePacket::decode, HashChallengePacket::handle);
             channel.registerMessage(packetId++, HashResultPacket.class, HashResultPacket::encode, HashResultPacket::decode, HashResultPacket::handle);
+            channel.registerMessage(packetId++, PreviewAssistRequestPacket.class, PreviewAssistRequestPacket::encode, PreviewAssistRequestPacket::decode, PreviewAssistRequestPacket::handle);
+            channel.registerMessage(packetId++, PreviewAssistResultPacket.class, PreviewAssistResultPacket::encode, PreviewAssistResultPacket::decode, PreviewAssistResultPacket::handle);
         });
     }
 

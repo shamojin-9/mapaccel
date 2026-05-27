@@ -5,6 +5,10 @@ import com.shamoji.mapaccel.cache.DirtyChunkTracker;
 import com.shamoji.mapaccel.cache.RegionSnapshotCache;
 import com.shamoji.mapaccel.config.MapAccelConfig;
 import com.shamoji.mapaccel.gpu.GpuTerrainBackend;
+import com.shamoji.mapaccel.net.MapAccelNetwork;
+import com.shamoji.mapaccel.net.PreviewAssistRequestPacket;
+import com.shamoji.mapaccel.preview.PreviewComputer;
+import com.shamoji.mapaccel.preview.PreviewMode;
 import com.shamoji.mapaccel.preview.SurfacePreview;
 import com.shamoji.mapaccel.preview.SurfacePreviewService;
 import net.minecraft.server.level.ServerLevel;
@@ -17,12 +21,16 @@ import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.level.ExplosionEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class MapAccelServer {
     private final MovementTracker movementTracker = new MovementTracker();
@@ -31,6 +39,7 @@ public final class MapAccelServer {
     private final SurfacePreviewService previewService = new SurfacePreviewService();
     private final DirtyChunkTracker dirtyTracker = new DirtyChunkTracker();
     private final RegionSnapshotCache snapshotCache = new RegionSnapshotCache();
+    private final Map<UUID, Integer> loginTicks = new ConcurrentHashMap<>();
     private int tickCursor;
     private int lastLogTick;
     private int plannedChunksWindow;
@@ -41,6 +50,7 @@ public final class MapAccelServer {
     private int surfacePreviewWindow;
     private int dirtyChunkWindow;
     private int snapshotHitWindow;
+    private int previewAssistAppliedWindow;
     private int activePlayersWindow;
     private int syncBudgetRemaining;
     private int syncBudgetSecond;
@@ -66,10 +76,15 @@ public final class MapAccelServer {
             if (!(player.level() instanceof ServerLevel level)) {
                 continue;
             }
+            int age = ticksSinceLogin(player);
+            if (age < MapAccelConfig.LOGIN_GRACE_TICKS.get()) {
+                movementTracker.update(player);
+                continue;
+            }
             MovementTracker.Prediction prediction = movementTracker.update(player);
             maxSpeedWindow = Math.max(maxSpeedWindow, prediction.speedBlocksPerTick());
             List<ChunkPos> plan = planner.plan(prediction);
-            preload(level, player, players, prediction, plan);
+            preload(level, player, players, prediction, plan, age);
         }
         tickCursor++;
         logSummaryIfDue(ServerLifecycleHooks.getCurrentServer().getTickCount());
@@ -79,11 +94,13 @@ public final class MapAccelServer {
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         movementTracker.remove(event.getEntity().getUUID());
         MapAccelServerState.CLIENT_RESOURCES.remove(event.getEntity().getUUID());
+        loginTicks.remove(event.getEntity().getUUID());
     }
 
     @SubscribeEvent
     public void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player && player.level() instanceof ServerLevel level) {
+            loginTicks.put(player.getUUID(), player.getServer().getTickCount());
             warmupLoginArea(level, player.chunkPosition());
         }
     }
@@ -103,12 +120,13 @@ public final class MapAccelServer {
         dirtyTracker.onExplosion(event);
     }
 
-    private void preload(ServerLevel level, ServerPlayer player, List<ServerPlayer> onlinePlayers, MovementTracker.Prediction prediction, List<ChunkPos> plan) {
-        int budget = adaptiveBudget(prediction);
+    private void preload(ServerLevel level, ServerPlayer player, List<ServerPlayer> onlinePlayers, MovementTracker.Prediction prediction, List<ChunkPos> plan, int ticksSinceLogin) {
+        int budget = rampedBudget(adaptiveBudget(prediction), ticksSinceLogin);
         Set<Long> seen = new HashSet<>();
         int generated = 0;
         plannedChunksWindow += plan.size();
         gpuPrecompute(level, plan);
+        requestPreviewAssist(level, onlinePlayers, plan);
         previewAndClassify(level, plan);
         for (ChunkPos pos : plan) {
             if (!seen.add(pos.toLong())) {
@@ -142,6 +160,25 @@ public final class MapAccelServer {
         }
     }
 
+    private int ticksSinceLogin(ServerPlayer player) {
+        int now = player.getServer().getTickCount();
+        int joinedAt = loginTicks.computeIfAbsent(player.getUUID(), id -> now);
+        return Math.max(0, now - joinedAt);
+    }
+
+    private int rampedBudget(int budget, int ticksSinceLogin) {
+        int grace = MapAccelConfig.LOGIN_GRACE_TICKS.get();
+        int ramp = MapAccelConfig.LOGIN_RAMP_TICKS.get();
+        if (ticksSinceLogin < grace) {
+            return 0;
+        }
+        if (ramp <= 0) {
+            return budget;
+        }
+        double ratio = Math.min(1.0D, (ticksSinceLogin - grace) / (double) ramp);
+        return Math.max(1, (int) Math.ceil(budget * ratio));
+    }
+
     private void previewAndClassify(ServerLevel level, List<ChunkPos> plan) {
         int budget = pressureBudget(MapAccelConfig.SURFACE_PREVIEW_CHUNKS_PER_TICK.get(), 16);
         if (budget <= 0) {
@@ -164,9 +201,80 @@ public final class MapAccelServer {
             if (previews >= budget) {
                 break;
             }
+            SurfacePreview assisted = MapAccelServerState.PREVIEW_ASSIST.take(level, pos);
+            if (assisted != null) {
+                previewService.remember(level, assisted);
+                surfacePreviewWindow++;
+                previewAssistAppliedWindow++;
+                previews++;
+                continue;
+            }
             previewService.preview(level, pos);
             surfacePreviewWindow++;
             previews++;
+        }
+    }
+
+    private void requestPreviewAssist(ServerLevel level, List<ServerPlayer> onlinePlayers, List<ChunkPos> plan) {
+        if (!MapAccelConfig.CLIENT_ASSIST.get()) {
+            return;
+        }
+        int budget = pressureBudget(MapAccelConfig.CLIENT_ASSIST_PREVIEW_CHUNKS_PER_TICK.get(), 0);
+        if (budget <= 0 || plan.isEmpty()) {
+            return;
+        }
+        List<ServerPlayer> assistants = MapAccelServerState.CLIENT_RESOURCES.rankedAssistClients(
+                onlinePlayers,
+                ServerLifecycleHooks.getCurrentServer().getTickCount(),
+                MapAccelConfig.CLIENT_ASSIST_MIN_FREE_MEMORY_MB.get(),
+                MapAccelConfig.CLIENT_ASSIST_MIN_FPS.get()
+        );
+        if (assistants.isEmpty()) {
+            return;
+        }
+
+        Set<Long> seen = new HashSet<>();
+        ArrayList<ChunkPos> candidates = new ArrayList<>();
+        for (ChunkPos pos : plan) {
+            if (candidates.size() >= budget) {
+                break;
+            }
+            if (!seen.add(pos.toLong()) || level.hasChunk(pos.x, pos.z)) {
+                continue;
+            }
+            candidates.add(pos);
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+
+        int maxBatch = MapAccelConfig.CLIENT_ASSIST_MAX_BATCH_CHUNKS.get();
+        int offset = 0;
+        int assistantIndex = 0;
+        PreviewMode mode = PreviewComputer.modeFor(level.dimension().location());
+        while (offset < candidates.size()) {
+            int count = Math.min(maxBatch, candidates.size() - offset);
+            int[] chunkXs = new int[count];
+            int[] chunkZs = new int[count];
+            for (int i = 0; i < count; i++) {
+                ChunkPos pos = candidates.get(offset + i);
+                chunkXs[i] = pos.x;
+                chunkZs[i] = pos.z;
+            }
+            long requestId = MapAccelServerState.PREVIEW_ASSIST.nextRequestId();
+            PreviewAssistRequestPacket packet = new PreviewAssistRequestPacket(
+                    requestId,
+                    level.dimension().location().toString(),
+                    level.getSeed(),
+                    mode.name(),
+                    chunkXs,
+                    chunkZs
+            );
+            ServerPlayer assistant = assistants.get(assistantIndex % assistants.size());
+            MapAccelNetwork.send(PacketDistributor.PLAYER.with(() -> assistant), packet);
+            MapAccelServerState.PREVIEW_ASSIST.requested(count);
+            offset += count;
+            assistantIndex++;
         }
     }
 
@@ -271,8 +379,9 @@ public final class MapAccelServer {
             GpuTerrainBackend backend = gpuBackend();
             GpuTerrainBackend.GpuStats gpuStats = backend.snapshotAndReset();
             DirtyChunkTracker.DirtySummary dirtySummary = dirtyTracker.summary();
+            PreviewAssistLedger.Stats assistStats = MapAccelServerState.PREVIEW_ASSIST.snapshotAndReset();
             MapAccel.LOGGER.info(
-                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
+                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} previewAssistRequested={} previewAssistReceived={} previewAssistAccepted={} previewAssistApplied={} previewAssistCache={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
                     plannedChunksWindow,
                     requestedChunksWindow,
                     skippedLoadedChunksWindow,
@@ -283,6 +392,11 @@ public final class MapAccelServer {
                     syncBudgetRemaining,
                     surfacePreviewWindow,
                     previewService.size(),
+                    assistStats.requestedChunks(),
+                    assistStats.receivedChunks(),
+                    assistStats.acceptedChunks(),
+                    previewAssistAppliedWindow,
+                    assistStats.cachedChunks(),
                     dirtyChunkWindow,
                     dirtySummary.chunks(),
                     dirtySummary.largeChangeCandidates(),
@@ -319,6 +433,7 @@ public final class MapAccelServer {
         surfacePreviewWindow = 0;
         dirtyChunkWindow = 0;
         snapshotHitWindow = 0;
+        previewAssistAppliedWindow = 0;
         activePlayersWindow = 0;
         maxSpeedWindow = 0.0D;
     }

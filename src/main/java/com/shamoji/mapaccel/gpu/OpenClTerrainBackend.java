@@ -64,6 +64,7 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
     private final AtomicInteger computedChunks = new AtomicInteger();
     private final AtomicLong computeNanos = new AtomicLong();
     private volatile int lastChecksum;
+    private volatile String disabledReason;
 
     private OpenClTerrainBackend(long context, long queue, long program, long kernel, String deviceName) {
         this.context = context;
@@ -163,7 +164,7 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
 
     @Override
     public boolean isAvailable() {
-        return true;
+        return disabledReason == null;
     }
 
     @Override
@@ -173,6 +174,18 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
 
     @Override
     public synchronized void warmupBatch(ServerLevel level, List<ChunkPos> positions) {
+        if (disabledReason != null) {
+            return;
+        }
+        try {
+            warmupBatchUnsafe(level, positions);
+        } catch (Throwable throwable) {
+            disabledReason = throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
+            MapAccel.LOGGER.warn("MapAccel OpenCL backend disabled after runtime error: {}", disabledReason);
+        }
+    }
+
+    private void warmupBatchUnsafe(ServerLevel level, List<ChunkPos> positions) {
         if (positions.isEmpty()) {
             return;
         }
@@ -233,7 +246,7 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
 
     @Override
     public String name() {
-        return "opencl";
+        return disabledReason == null ? "opencl" : "disabled";
     }
 
     @Override
@@ -242,7 +255,7 @@ final class OpenClTerrainBackend implements GpuTerrainBackend {
                 computeRequests.getAndSet(0),
                 computedChunks.getAndSet(0),
                 computeNanos.getAndSet(0L),
-                deviceName + " checksum=" + lastChecksum
+                disabledReason == null ? deviceName + " checksum=" + lastChecksum : "OpenCL runtime disabled: " + disabledReason
         );
     }
 

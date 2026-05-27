@@ -21,6 +21,11 @@ public final class SurfacePreviewService {
         return cache.computeIfAbsent(key, ignored -> compute(level, pos, key.mode));
     }
 
+    public void remember(ServerLevel level, SurfacePreview preview) {
+        Key key = new Key(level.dimension().location(), level.getSeed(), preview.chunkPos().x, preview.chunkPos().z, preview.mode());
+        cache.put(key, preview);
+    }
+
     public int size() {
         return cache.size();
     }
@@ -30,46 +35,11 @@ public final class SurfacePreviewService {
     }
 
     private SurfacePreview compute(ServerLevel level, ChunkPos pos, PreviewMode mode) {
-        int min = Integer.MAX_VALUE;
-        int max = Integer.MIN_VALUE;
-        int total = 0;
-        int hash = 1;
-        for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-                int worldX = (pos.x << 4) + x;
-                int worldZ = (pos.z << 4) + z;
-                int height = previewHeight(level.getSeed(), worldX, worldZ, mode);
-                min = Math.min(min, height);
-                max = Math.max(max, height);
-                total += height;
-                hash = 31 * hash + height;
-            }
-        }
-        return new SurfacePreview(level.dimension().location(), pos, mode, min, max, total / 256, hash);
-    }
-
-    private int previewHeight(long seed, int x, int z, PreviewMode mode) {
-        long mixed = seed ^ (x * 341873128712L) ^ (z * 132897987541L);
-        mixed ^= mixed >>> 33;
-        mixed *= 0xff51afd7ed558ccdL;
-        mixed ^= mixed >>> 33;
-        int noise = (int) (mixed & 63L);
-        return switch (mode) {
-            case SURFACE -> 52 + noise;
-            case SHELL -> 32 + noise;
-            case ISLAND -> 48 + noise / 2;
-        };
+        return PreviewComputer.compute(level.dimension().location(), level.getSeed(), pos, mode);
     }
 
     private PreviewMode modeFor(ServerLevel level) {
-        ResourceLocation dimension = level.dimension().location();
-        if ("the_nether".equals(dimension.getPath())) {
-            return PreviewMode.SHELL;
-        }
-        if ("the_end".equals(dimension.getPath())) {
-            return PreviewMode.ISLAND;
-        }
-        return PreviewMode.SURFACE;
+        return PreviewComputer.modeFor(level.dimension().location());
     }
 
     private record Key(ResourceLocation dimension, long seed, int chunkX, int chunkZ, PreviewMode mode) {

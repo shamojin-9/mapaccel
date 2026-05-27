@@ -34,7 +34,7 @@ public final class PredictiveChunkPlanner {
                 boolean circular = magnitude <= 0.0001D || speedRatio < 0.15D;
                 boolean inside = circular
                         ? dx * dx + dz * dz <= minRadius * minRadius
-                        : forward >= -backward && forward <= length && side <= width;
+                        : forward >= -backward && forward <= length && Math.abs(side) <= width;
                 if (inside) {
                     chunks.add(new ChunkPos(prediction.chunkX() + dx, prediction.chunkZ() + dz));
                 }
