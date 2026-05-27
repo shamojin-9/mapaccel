@@ -39,6 +39,7 @@ public final class MapAccelServer {
     private final SurfacePreviewService previewService = new SurfacePreviewService();
     private final DirtyChunkTracker dirtyTracker = new DirtyChunkTracker();
     private final RegionSnapshotCache snapshotCache = new RegionSnapshotCache();
+    private final HotChunkCache hotChunkCache = new HotChunkCache();
     private final Map<UUID, Integer> loginTicks = new ConcurrentHashMap<>();
     private int tickCursor;
     private int lastLogTick;
@@ -83,9 +84,11 @@ public final class MapAccelServer {
             }
             MovementTracker.Prediction prediction = movementTracker.update(player);
             maxSpeedWindow = Math.max(maxSpeedWindow, prediction.speedBlocksPerTick());
-            List<ChunkPos> plan = planner.plan(prediction);
+            hotChunkCache.keepAround(level, player, ServerLifecycleHooks.getCurrentServer().getTickCount());
+            List<ChunkPos> plan = mergeHotTrail(level, player, planner.plan(prediction));
             preload(level, player, players, prediction, plan, age);
         }
+        hotChunkCache.cleanup(ServerLifecycleHooks.getCurrentServer(), ServerLifecycleHooks.getCurrentServer().getTickCount());
         tickCursor++;
         logSummaryIfDue(ServerLifecycleHooks.getCurrentServer().getTickCount());
     }
@@ -94,6 +97,7 @@ public final class MapAccelServer {
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         movementTracker.remove(event.getEntity().getUUID());
         MapAccelServerState.CLIENT_RESOURCES.remove(event.getEntity().getUUID());
+        hotChunkCache.removePlayer(event.getEntity().getUUID());
         loginTicks.remove(event.getEntity().getUUID());
     }
 
@@ -140,6 +144,10 @@ public final class MapAccelServer {
             }
             if (level.hasChunk(pos.x, pos.z)) {
                 skippedLoadedChunksWindow++;
+                if (hotChunkCache.isHot(level, pos)) {
+                    hotChunkCache.countHotHit();
+                }
+                hotChunkCache.touchIfLoaded(level, pos, ServerLifecycleHooks.getCurrentServer().getTickCount());
                 if (dirtyTracker.isDirty(level, pos)) {
                     SurfacePreview preview = previewService.preview(level, pos);
                     snapshotCache.rememberLoadedChunk(level, pos, preview.hash(), true);
@@ -151,6 +159,7 @@ public final class MapAccelServer {
             requestedChunksWindow++;
             estimatedDiskWriteKbWindow += 64;
             syncBudgetRemaining--;
+            hotChunkCache.touchIfLoaded(level, pos, ServerLifecycleHooks.getCurrentServer().getTickCount());
             if ((tickCursor + generated) % 5 == 0) {
                 MapAccelServerState.VALIDATION.maybeChallenge(level, player, onlinePlayers, pos);
             }
@@ -177,6 +186,26 @@ public final class MapAccelServer {
         }
         double ratio = Math.min(1.0D, (ticksSinceLogin - grace) / (double) ramp);
         return Math.max(1, (int) Math.ceil(budget * ratio));
+    }
+
+    private List<ChunkPos> mergeHotTrail(ServerLevel level, ServerPlayer player, List<ChunkPos> planned) {
+        List<ChunkPos> trail = hotChunkCache.recentTrail(level, player.getUUID(), MapAccelConfig.HOT_CHUNK_TRAIL_PLAN_CHUNKS.get());
+        if (trail.isEmpty()) {
+            return planned;
+        }
+        ArrayList<ChunkPos> merged = new ArrayList<>(trail.size() + planned.size());
+        Set<Long> seen = new HashSet<>();
+        for (ChunkPos pos : trail) {
+            if (seen.add(pos.toLong())) {
+                merged.add(pos);
+            }
+        }
+        for (ChunkPos pos : planned) {
+            if (seen.add(pos.toLong())) {
+                merged.add(pos);
+            }
+        }
+        return merged;
     }
 
     private void previewAndClassify(ServerLevel level, List<ChunkPos> plan) {
@@ -380,8 +409,9 @@ public final class MapAccelServer {
             GpuTerrainBackend.GpuStats gpuStats = backend.snapshotAndReset();
             DirtyChunkTracker.DirtySummary dirtySummary = dirtyTracker.summary();
             PreviewAssistLedger.Stats assistStats = MapAccelServerState.PREVIEW_ASSIST.snapshotAndReset();
+            HotChunkCache.Stats hotStats = hotChunkCache.snapshotAndReset();
             MapAccel.LOGGER.info(
-                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} previewAssistRequested={} previewAssistReceived={} previewAssistAccepted={} previewAssistApplied={} previewAssistCache={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
+                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} previewAssistRequested={} previewAssistReceived={} previewAssistAccepted={} previewAssistApplied={} previewAssistCache={} hotPinned={} hotRefreshed={} hotReleased={} hotHits={} hotRetained={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
                     plannedChunksWindow,
                     requestedChunksWindow,
                     skippedLoadedChunksWindow,
@@ -397,6 +427,11 @@ public final class MapAccelServer {
                     assistStats.acceptedChunks(),
                     previewAssistAppliedWindow,
                     assistStats.cachedChunks(),
+                    hotStats.pinned(),
+                    hotStats.refreshed(),
+                    hotStats.released(),
+                    hotStats.hotHits(),
+                    hotStats.retained(),
                     dirtyChunkWindow,
                     dirtySummary.chunks(),
                     dirtySummary.largeChangeCandidates(),
