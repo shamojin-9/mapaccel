@@ -62,7 +62,10 @@ public final class PredictiveChunkPlanner {
         double forwardZ = prediction.vz() / magnitude;
         double forward = dx * forwardX + dz * forwardZ;
         double side = Math.abs(dx * -forwardZ + dz * forwardX);
-        double behindPenalty = forward < 0.0D ? Math.abs(forward) * 20.0D : 0.0D;
-        return -forward * 8.0D + side * 3.0D + behindPenalty + (dx * dx + dz * dz) * 0.03D;
+        double behindPenalty = forward < 0.0D ? Math.abs(forward) * 80.0D : 0.0D;
+        double sidePenalty = side * side * 2.25D;
+        double arrivalOrder = Math.max(0.0D, forward) * 1.35D;
+        double immediateCorridorBonus = forward >= 0.0D && forward <= 10.0D && side <= 2.0D ? -8.0D : 0.0D;
+        return arrivalOrder + sidePenalty + behindPenalty + (dx * dx + dz * dz) * 0.01D + immediateCorridorBonus;
     }
 }
