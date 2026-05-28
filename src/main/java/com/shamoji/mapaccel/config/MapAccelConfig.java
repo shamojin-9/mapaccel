@@ -8,6 +8,9 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.IntValue MIN_RADIUS;
     public static final ForgeConfigSpec.IntValue MAX_FORWARD_RADIUS;
     public static final ForgeConfigSpec.IntValue SIDE_RADIUS;
+    public static final ForgeConfigSpec.IntValue MEDIUM_SPEED_SIDE_RADIUS;
+    public static final ForgeConfigSpec.DoubleValue MEDIUM_SPEED_SIDE_MAX_BLOCKS_PER_TICK;
+    public static final ForgeConfigSpec.DoubleValue EXTREME_SPEED_BLOCKS_PER_TICK;
     public static final ForgeConfigSpec.IntValue HIGH_SPEED_SIDE_RADIUS;
     public static final ForgeConfigSpec.IntValue BACKWARD_RADIUS;
     public static final ForgeConfigSpec.BooleanValue HOT_CHUNK_CACHE_ENABLED;
@@ -54,6 +57,9 @@ public final class MapAccelConfig {
         MIN_RADIUS = builder.comment("Minimum circular preload radius in chunks.").defineInRange("minRadius", 4, 1, 32);
         MAX_FORWARD_RADIUS = builder.comment("Maximum forward prediction distance in chunks at high speed.").defineInRange("maxForwardRadius", 56, 2, 128);
         SIDE_RADIUS = builder.comment("Side radius used when the shape stretches in the movement direction.").defineInRange("sideRadius", 8, 1, 64);
+        MEDIUM_SPEED_SIDE_RADIUS = builder.comment("Side radius for controllable fast flight. This widens 3x-4x flight without flooding 5x+ flight.").defineInRange("mediumSpeedSideRadius", 6, 1, 64);
+        MEDIUM_SPEED_SIDE_MAX_BLOCKS_PER_TICK = builder.comment("Use mediumSpeedSideRadius up to this measured speed. Raise it if 4x flight is still too narrow.").defineInRange("mediumSpeedSideMaxBlocksPerTick", 45.0D, 0.1D, 200.0D);
+        EXTREME_SPEED_BLOCKS_PER_TICK = builder.comment("Speed where prediction fully shrinks to highSpeedSideRadius. Lower values preserve 5x+ straight-line performance.").defineInRange("extremeSpeedBlocksPerTick", 75.0D, 0.1D, 400.0D);
         HIGH_SPEED_SIDE_RADIUS = builder.comment("Side radius at high speed; lower values create a thinner forward corridor.").defineInRange("highSpeedSideRadius", 3, 1, 32);
         BACKWARD_RADIUS = builder.comment("Backward preload radius while moving. Higher values make sudden turn-backs less likely to outrun cached chunks.").defineInRange("backwardRadius", 8, 0, 32);
         HOT_CHUNK_CACHE_ENABLED = builder.comment("Keep recently visited/generated chunks hot in memory for a short time with non-persistent region tickets.").define("hotChunkCacheEnabled", true);

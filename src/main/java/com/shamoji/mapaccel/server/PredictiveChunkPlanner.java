@@ -14,8 +14,7 @@ public final class PredictiveChunkPlanner {
         double speedRatio = Math.min(1.0D, prediction.speedBlocksPerTick() / MapAccelConfig.HIGH_SPEED_BLOCKS_PER_TICK.get());
 
         double length = minRadius + (maxForward - minRadius) * speedRatio;
-        double width = MapAccelConfig.SIDE_RADIUS.get()
-                + (MapAccelConfig.HIGH_SPEED_SIDE_RADIUS.get() - MapAccelConfig.SIDE_RADIUS.get()) * speedRatio;
+        double width = sideRadius(prediction.speedBlocksPerTick(), speedRatio);
         double backward = minRadius + (MapAccelConfig.BACKWARD_RADIUS.get() - minRadius) * speedRatio;
         double vx = prediction.vx();
         double vz = prediction.vz();
@@ -67,5 +66,23 @@ public final class PredictiveChunkPlanner {
         double arrivalOrder = Math.max(0.0D, forward) * 1.35D;
         double immediateCorridorBonus = forward >= 0.0D && forward <= 10.0D && side <= 2.0D ? -8.0D : 0.0D;
         return arrivalOrder + sidePenalty + behindPenalty + (dx * dx + dz * dz) * 0.01D + immediateCorridorBonus;
+    }
+
+    private double sideRadius(double speedBlocksPerTick, double speedRatio) {
+        double normal = MapAccelConfig.SIDE_RADIUS.get();
+        double medium = MapAccelConfig.MEDIUM_SPEED_SIDE_RADIUS.get();
+        double high = MapAccelConfig.HIGH_SPEED_SIDE_RADIUS.get();
+        if (speedRatio < 0.15D) {
+            return normal;
+        }
+
+        double mediumMax = MapAccelConfig.MEDIUM_SPEED_SIDE_MAX_BLOCKS_PER_TICK.get();
+        double extreme = Math.max(mediumMax + 0.1D, MapAccelConfig.EXTREME_SPEED_BLOCKS_PER_TICK.get());
+        if (speedBlocksPerTick <= mediumMax) {
+            double blend = Math.min(1.0D, speedRatio / 0.65D);
+            return normal + (medium - normal) * blend;
+        }
+        double shrink = Math.min(1.0D, (speedBlocksPerTick - mediumMax) / (extreme - mediumMax));
+        return medium + (high - medium) * shrink;
     }
 }
