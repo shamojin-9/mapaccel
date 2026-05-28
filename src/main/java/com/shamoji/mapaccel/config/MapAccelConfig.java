@@ -46,6 +46,7 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.BooleanValue LOG_CHUNK_REQUESTS;
     public static final ForgeConfigSpec.BooleanValue LOG_RESOURCE_SUMMARY;
     public static final ForgeConfigSpec.BooleanValue STABILIZE_CREATIVE_FLIGHT_FOV;
+    public static final ForgeConfigSpec.BooleanValue PATCH_EMBEDDIUM_DEPTH_COMPAT;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -103,6 +104,7 @@ public final class MapAccelConfig {
 
         builder.push("client");
         STABILIZE_CREATIVE_FLIGHT_FOV = builder.comment("Keep FOV stable while creative flight speed mods repeatedly adjust flying speed.").define("stabilizeCreativeFlightFov", true);
+        PATCH_EMBEDDIUM_DEPTH_COMPAT = builder.comment("Patch Embeddium/Rubidium client options that can spam GL_INVALID_OPERATION depth-format errors during aggressive chunk updates.").define("patchEmbeddiumDepthCompat", true);
         builder.pop();
 
         SPEC = builder.build();

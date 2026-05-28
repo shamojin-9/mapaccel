@@ -7,6 +7,7 @@ public final class MapAccelClient {
     }
 
     public static void init() {
+        EmbeddiumDepthCompat.patchIfNeeded();
         MinecraftForge.EVENT_BUS.register(new ClientMetricsReporter());
         MinecraftForge.EVENT_BUS.register(new CreativeFlightFovStabilizer());
     }
