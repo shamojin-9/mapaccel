@@ -11,13 +11,13 @@ import java.util.function.Supplier;
 public record HashChallengePacket(long challengeId, String dimension, int chunkX, int chunkZ) {
     public static void encode(HashChallengePacket packet, FriendlyByteBuf buffer) {
         buffer.writeLong(packet.challengeId);
-        buffer.writeUtf(packet.dimension);
+        buffer.writeUtf(packet.dimension, 128);
         buffer.writeInt(packet.chunkX);
         buffer.writeInt(packet.chunkZ);
     }
 
     public static HashChallengePacket decode(FriendlyByteBuf buffer) {
-        return new HashChallengePacket(buffer.readLong(), buffer.readUtf(), buffer.readInt(), buffer.readInt());
+        return new HashChallengePacket(buffer.readLong(), buffer.readUtf(128), buffer.readInt(), buffer.readInt());
     }
 
     public static void handle(HashChallengePacket packet, Supplier<NetworkEvent.Context> context) {

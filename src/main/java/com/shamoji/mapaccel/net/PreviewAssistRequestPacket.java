@@ -14,9 +14,9 @@ public record PreviewAssistRequestPacket(long requestId, String dimension, long 
     public static void encode(PreviewAssistRequestPacket packet, FriendlyByteBuf buffer) {
         int count = Math.min(packet.chunkXs.length, packet.chunkZs.length);
         buffer.writeLong(packet.requestId);
-        buffer.writeUtf(packet.dimension);
+        buffer.writeUtf(packet.dimension, 128);
         buffer.writeLong(packet.seed);
-        buffer.writeUtf(packet.mode);
+        buffer.writeUtf(packet.mode, 64);
         buffer.writeVarInt(count);
         for (int i = 0; i < count; i++) {
             buffer.writeInt(packet.chunkXs[i]);
@@ -26,15 +26,20 @@ public record PreviewAssistRequestPacket(long requestId, String dimension, long 
 
     public static PreviewAssistRequestPacket decode(FriendlyByteBuf buffer) {
         long requestId = buffer.readLong();
-        String dimension = buffer.readUtf();
+        String dimension = buffer.readUtf(128);
         long seed = buffer.readLong();
-        String mode = buffer.readUtf();
-        int count = Math.min(MAX_CHUNKS, buffer.readVarInt());
+        String mode = buffer.readUtf(64);
+        int encodedCount = Math.max(0, buffer.readVarInt());
+        int count = Math.min(MAX_CHUNKS, encodedCount);
         int[] chunkXs = new int[count];
         int[] chunkZs = new int[count];
-        for (int i = 0; i < count; i++) {
-            chunkXs[i] = buffer.readInt();
-            chunkZs[i] = buffer.readInt();
+        for (int i = 0; i < encodedCount; i++) {
+            int chunkX = buffer.readInt();
+            int chunkZ = buffer.readInt();
+            if (i < count) {
+                chunkXs[i] = chunkX;
+                chunkZs[i] = chunkZ;
+            }
         }
         return new PreviewAssistRequestPacket(requestId, dimension, seed, mode, chunkXs, chunkZs);
     }

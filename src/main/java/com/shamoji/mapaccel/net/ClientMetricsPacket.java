@@ -1,5 +1,7 @@
 package com.shamoji.mapaccel.net;
 
+import com.shamoji.mapaccel.config.MapAccelConfig;
+import com.shamoji.mapaccel.security.InboundRateLimiter;
 import com.shamoji.mapaccel.server.MapAccelServerState;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.network.NetworkEvent;
@@ -22,7 +24,10 @@ public record ClientMetricsPacket(int freeMemoryMb, int maxMemoryMb, int usedMem
         NetworkEvent.Context ctx = context.get();
         ctx.enqueueWork(() -> {
             if (ctx.getSender() != null) {
-                MapAccelServerState.CLIENT_RESOURCES.update(ctx.getSender().getUUID(), packet.freeMemoryMb, packet.maxMemoryMb, packet.usedMemoryMb, packet.fpsEstimate, ctx.getSender().getServer().getTickCount());
+                int serverTick = ctx.getSender().getServer().getTickCount();
+                if (MapAccelServerState.RATE_LIMITER.allow(ctx.getSender().getUUID(), InboundRateLimiter.Bucket.CLIENT_METRICS, serverTick, MapAccelConfig.CLIENT_METRICS_MIN_INTERVAL_TICKS.get())) {
+                    MapAccelServerState.CLIENT_RESOURCES.update(ctx.getSender().getUUID(), packet.freeMemoryMb, packet.maxMemoryMb, packet.usedMemoryMb, packet.fpsEstimate, serverTick);
+                }
             }
         });
         ctx.setPacketHandled(true);

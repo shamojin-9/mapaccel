@@ -19,6 +19,7 @@ public final class MapAccelCommands {
                         .then(Commands.argument("player", EntityArgument.player())
                                 .executes(context -> {
                                     ServerPlayer player = EntityArgument.getPlayer(context, "player");
+                                    MapAccelServerState.TRUST.attach(player.getServer());
                                     int trust = MapAccelServerState.TRUST.trustOf(player.getUUID());
                                     int mismatches = MapAccelServerState.TRUST.mismatchCount(player.getUUID());
                                     ClientResourceLedger.ClientResource resource = MapAccelServerState.CLIENT_RESOURCES.get(player.getUUID());
@@ -38,8 +39,19 @@ public final class MapAccelCommands {
                                     "MapAccel radius=" + MapAccelConfig.MIN_RADIUS.get()
                                             + " forward=" + MapAccelConfig.MAX_FORWARD_RADIUS.get()
                                             + " budget=" + MapAccelConfig.CHUNKS_PER_TICK.get()
+                                            + " apiBudget=" + MapAccelConfig.API_CHUNKS_PER_TICK.get()
+                                            + " apiRadius=" + MapAccelConfig.API_LOAD_RADIUS.get()
                                             + " validators=" + MapAccelConfig.VALIDATOR_COUNT.get()
                                             + " autoBan=" + MapAccelConfig.AUTO_BAN.get()
+                            ), false);
+                            return 1;
+                        }))
+                .then(Commands.literal("status")
+                        .executes(context -> {
+                            context.getSource().sendSuccess(() -> Component.literal(
+                                    "MapAccel pendingApiChunks=" + ExternalLoadRequestQueue.pendingRequests()
+                                            + " activeApiRequesters=" + ExternalLoadRequestQueue.activeRequesters()
+                                            + " clientResourceReports=" + MapAccelServerState.CLIENT_RESOURCES.summary(0).clients()
                             ), false);
                             return 1;
                         })));

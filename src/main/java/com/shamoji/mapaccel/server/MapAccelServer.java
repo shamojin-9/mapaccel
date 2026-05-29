@@ -72,6 +72,7 @@ public final class MapAccelServer {
         }
         List<ServerPlayer> players = ServerLifecycleHooks.getCurrentServer().getPlayerList().getPlayers();
         updateServerPacing(ServerLifecycleHooks.getCurrentServer().getTickCount());
+        drainExternalRequests();
         activePlayersWindow = Math.max(activePlayersWindow, players.size());
         for (ServerPlayer player : players) {
             if (!(player.level() instanceof ServerLevel level)) {
@@ -97,6 +98,7 @@ public final class MapAccelServer {
     public void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         movementTracker.remove(event.getEntity().getUUID());
         MapAccelServerState.CLIENT_RESOURCES.remove(event.getEntity().getUUID());
+        MapAccelServerState.RATE_LIMITER.remove(event.getEntity().getUUID());
         hotChunkCache.removePlayer(event.getEntity().getUUID());
         loginTicks.remove(event.getEntity().getUUID());
     }
@@ -104,6 +106,7 @@ public final class MapAccelServer {
     @SubscribeEvent
     public void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player && player.level() instanceof ServerLevel level) {
+            MapAccelServerState.TRUST.attach(player.getServer());
             loginTicks.put(player.getUUID(), player.getServer().getTickCount());
             warmupLoginArea(level, player.chunkPosition());
         }
@@ -301,7 +304,16 @@ public final class MapAccelServer {
             );
             ServerPlayer assistant = assistants.get(assistantIndex % assistants.size());
             MapAccelNetwork.send(PacketDistributor.PLAYER.with(() -> assistant), packet);
-            MapAccelServerState.PREVIEW_ASSIST.requested(count);
+            MapAccelServerState.PREVIEW_ASSIST.requested(
+                    requestId,
+                    assistant.getUUID(),
+                    level.dimension().location(),
+                    level.getSeed(),
+                    mode,
+                    chunkXs,
+                    chunkZs,
+                    ServerLifecycleHooks.getCurrentServer().getTickCount()
+            );
             offset += count;
             assistantIndex++;
         }
@@ -354,6 +366,18 @@ public final class MapAccelServer {
         backend.warmupBatch(level, batch);
         gpuWarmupsWindow += batch.size();
         MapAccel.LOGGER.info("MapAccel login GPU warmup: chunks={} center={},{} backend={}", batch.size(), center.x, center.z, backend.name());
+    }
+
+    private void drainExternalRequests() {
+        int budget = Math.min(syncBudgetRemaining, pressureBudget(MapAccelConfig.API_CHUNKS_PER_TICK.get(), 1));
+        ExternalLoadRequestQueue.DrainStats stats = ExternalLoadRequestQueue.drain(ServerLifecycleHooks.getCurrentServer(), budget);
+        if (stats.loadedChunks() <= 0) {
+            return;
+        }
+        requestedChunksWindow += stats.loadedChunks();
+        skippedLoadedChunksWindow += stats.skippedChunks();
+        estimatedDiskWriteKbWindow += stats.loadedChunks() * 64;
+        syncBudgetRemaining = Math.max(0, syncBudgetRemaining - stats.loadedChunks());
     }
 
     private int adaptiveBudget(MovementTracker.Prediction prediction) {

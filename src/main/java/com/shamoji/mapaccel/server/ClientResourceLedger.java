@@ -11,11 +11,20 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class ClientResourceLedger {
+    private static final int MAX_MEMORY_MB = 262144;
+    private static final int MAX_FPS = 1000;
     private final Map<UUID, ClientResource> resources = new HashMap<>();
 
     public void update(UUID playerId, int freeMemoryMb, int maxMemoryMb, int usedMemoryMb, int fpsEstimate, int serverTick) {
         ClientResource previous = get(playerId);
-        resources.put(playerId, new ClientResource(freeMemoryMb, maxMemoryMb, usedMemoryMb, fpsEstimate, serverTick, previous.packetCount() + 1));
+        resources.put(playerId, new ClientResource(
+                clamp(freeMemoryMb, 0, MAX_MEMORY_MB),
+                clamp(maxMemoryMb, 0, MAX_MEMORY_MB),
+                clamp(usedMemoryMb, 0, MAX_MEMORY_MB),
+                clamp(fpsEstimate, 0, MAX_FPS),
+                serverTick,
+                previous.packetCount() == Integer.MAX_VALUE ? Integer.MAX_VALUE : previous.packetCount() + 1
+        ));
     }
 
     public ClientResource get(UUID playerId) {
@@ -28,7 +37,7 @@ public final class ClientResourceLedger {
 
     public int score(UUID playerId) {
         ClientResource resource = get(playerId);
-        return resource.freeMemoryMb + resource.fpsEstimate * 16;
+        return Math.min(Integer.MAX_VALUE, resource.freeMemoryMb + resource.fpsEstimate * 16);
     }
 
     public List<ServerPlayer> rankedAssistClients(Collection<ServerPlayer> players, int serverTick, int minFreeMemoryMb, int minFps) {
@@ -73,6 +82,10 @@ public final class ClientResourceLedger {
             }
         }
         return new ResourceSummary(clients, freshClients, freeMemory, usedMemory, maxMemory, fps / Math.max(1, clients), packets);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     public record ClientResource(int freeMemoryMb, int maxMemoryMb, int usedMemoryMb, int fpsEstimate, int serverTick, int packetCount) {
