@@ -42,10 +42,18 @@ public final class PreviewAssistLedger {
         requestedChunks += count;
     }
 
+    public synchronized void requestedRemote(long requestId, ResourceLocation dimension, long seed, PreviewMode mode, int[] chunkXs, int[] chunkZs, int serverTick) {
+        cleanupExpired(serverTick);
+        trimPending();
+        int count = Math.min(chunkXs.length, chunkZs.length);
+        pendingRequests.put(requestId, new PendingRequest(null, dimension, seed, mode, chunkXs, chunkZs, serverTick));
+        requestedChunks += count;
+    }
+
     public synchronized void accept(UUID senderId, PreviewAssistResultPacket packet, int serverTick) {
         cleanupExpired(serverTick);
         PendingRequest request = pendingRequests.remove(packet.requestId());
-        if (request == null || !request.receiverId.equals(senderId)) {
+        if (request == null || (request.receiverId != null && !request.receiverId.equals(senderId))) {
             return;
         }
         ResourceLocation dimension = ResourceLocation.tryParse(packet.dimension());
@@ -75,6 +83,10 @@ public final class PreviewAssistLedger {
             previews.put(new Key(dimension, packet.seed(), preview.chunkPos().x, preview.chunkPos().z, mode), preview);
             acceptedChunks++;
         }
+    }
+
+    public synchronized void acceptRemote(PreviewAssistResultPacket packet, int serverTick) {
+        accept(null, packet, serverTick);
     }
 
     private void cleanupExpired(int serverTick) {

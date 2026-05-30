@@ -57,6 +57,12 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.IntValue TRUST_PENALTY;
     public static final ForgeConfigSpec.IntValue BAN_THRESHOLD;
     public static final ForgeConfigSpec.BooleanValue AUTO_BAN;
+    public static final ForgeConfigSpec.BooleanValue REMOTE_WORKER_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> REMOTE_WORKER_BIND_ADDRESS;
+    public static final ForgeConfigSpec.IntValue REMOTE_WORKER_PORT;
+    public static final ForgeConfigSpec.ConfigValue<String> REMOTE_WORKER_ACCESS_TOKEN;
+    public static final ForgeConfigSpec.IntValue REMOTE_WORKER_QUEUE_LIMIT;
+    public static final ForgeConfigSpec.IntValue REMOTE_WORKER_MAX_BATCH_CHUNKS;
     public static final ForgeConfigSpec.BooleanValue ENABLE_OPENCL_BACKEND;
     public static final ForgeConfigSpec.BooleanValue DISABLE_OPENCL_WITH_EMBEDDIUM;
     public static final ForgeConfigSpec.IntValue LOG_INTERVAL_SECONDS;
@@ -123,6 +129,15 @@ public final class MapAccelConfig {
         TRUST_PENALTY = builder.comment("Trust points removed on mismatched hash.").defineInRange("trustPenalty", 25, 1, 1000);
         BAN_THRESHOLD = builder.comment("Trust score at or below this value can trigger an automatic ban.").defineInRange("banThreshold", -100, -10000, 100);
         AUTO_BAN = builder.comment("Ban clients that repeatedly fail validation.").define("autoBan", false);
+        builder.pop();
+
+        builder.push("remoteWorkers");
+        REMOTE_WORKER_ENABLED = builder.comment("Start a token-protected LAN HTTP worker gateway so phones, tablets, and other PCs can assist preview computation from a browser.").define("remoteWorkerEnabled", true);
+        REMOTE_WORKER_BIND_ADDRESS = builder.comment("Bind address for the remote worker gateway. 0.0.0.0 allows LAN devices to connect.").define("remoteWorkerBindAddress", "0.0.0.0");
+        REMOTE_WORKER_PORT = builder.comment("TCP port for the remote worker gateway.").defineInRange("remoteWorkerPort", 8765, 1024, 65535);
+        REMOTE_WORKER_ACCESS_TOKEN = builder.comment("Shared token for remote workers. Leave blank to generate a random token each server start.").define("remoteWorkerAccessToken", "");
+        REMOTE_WORKER_QUEUE_LIMIT = builder.comment("Maximum queued preview batches waiting for browser/remote workers.").defineInRange("remoteWorkerQueueLimit", 2048, 1, 100000);
+        REMOTE_WORKER_MAX_BATCH_CHUNKS = builder.comment("Maximum chunks sent to one remote worker in a single browser task.").defineInRange("remoteWorkerMaxBatchChunks", 96, 1, 256);
         builder.pop();
 
         builder.push("gpu");

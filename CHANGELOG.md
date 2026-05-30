@@ -2,6 +2,9 @@
 
 ## 0.1.0 - 2026-05-29
 
+- Added token-protected LAN remote worker gateway for browser-based compute assist from other PCs, phones, and tablets.
+- Added remote worker browser page with polling preview tasks and matching JavaScript preview computation.
+- Added remote worker queue, token, bind address, port, batch size, and queue limit configuration.
 - Added a public MapAccel API for external mods to request projected movement, area, priority, and forced-priority chunk preloading.
 - Added bounded external load queue handling with requester rate limits, pending limits, TTL cleanup, priority ordering, and range caps.
 - Added multiplayer cooperative security hardening for hash validation and preview-assist packets.

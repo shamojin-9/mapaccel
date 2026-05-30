@@ -43,6 +43,7 @@ public final class MapAccelCommands {
                                             + " apiRadius=" + MapAccelConfig.API_LOAD_RADIUS.get()
                                             + " validators=" + MapAccelConfig.VALIDATOR_COUNT.get()
                                             + " autoBan=" + MapAccelConfig.AUTO_BAN.get()
+                                            + " remoteWorkers=" + MapAccelConfig.REMOTE_WORKER_ENABLED.get()
                             ), false);
                             return 1;
                         }))
@@ -51,6 +52,7 @@ public final class MapAccelCommands {
                             context.getSource().sendSuccess(() -> Component.literal(
                                     "MapAccel pendingApiChunks=" + ExternalLoadRequestQueue.pendingRequests()
                                             + " activeApiRequesters=" + ExternalLoadRequestQueue.activeRequesters()
+                                            + " remoteWorkerUrl=" + RemoteWorkerGateway.workerUrlHint()
                                             + " clientResourceReports=" + MapAccelServerState.CLIENT_RESOURCES.summary(0).clients()
                             ), false);
                             return 1;

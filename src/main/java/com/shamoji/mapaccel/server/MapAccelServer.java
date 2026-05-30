@@ -20,6 +20,7 @@ import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.level.ExplosionEvent;
+import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.server.ServerLifecycleHooks;
@@ -70,6 +71,7 @@ public final class MapAccelServer {
         if (event.phase != TickEvent.Phase.END || ServerLifecycleHooks.getCurrentServer() == null || ServerLifecycleHooks.getCurrentServer().getTickCount() % 2 != 0) {
             return;
         }
+        RemoteWorkerGateway.ensureStarted(ServerLifecycleHooks.getCurrentServer());
         List<ServerPlayer> players = ServerLifecycleHooks.getCurrentServer().getPlayerList().getPlayers();
         updateServerPacing(ServerLifecycleHooks.getCurrentServer().getTickCount());
         drainExternalRequests();
@@ -101,6 +103,11 @@ public final class MapAccelServer {
         MapAccelServerState.RATE_LIMITER.remove(event.getEntity().getUUID());
         hotChunkCache.removePlayer(event.getEntity().getUUID());
         loginTicks.remove(event.getEntity().getUUID());
+    }
+
+    @SubscribeEvent
+    public void onServerStopping(ServerStoppingEvent event) {
+        RemoteWorkerGateway.stop();
     }
 
     @SubscribeEvent
@@ -261,7 +268,8 @@ public final class MapAccelServer {
                 MapAccelConfig.CLIENT_ASSIST_MIN_FREE_MEMORY_MB.get(),
                 MapAccelConfig.CLIENT_ASSIST_MIN_FPS.get()
         );
-        if (assistants.isEmpty()) {
+        boolean remoteWorkers = RemoteWorkerGateway.available();
+        if (assistants.isEmpty() && !remoteWorkers) {
             return;
         }
 
@@ -280,7 +288,9 @@ public final class MapAccelServer {
             return;
         }
 
-        int maxBatch = MapAccelConfig.CLIENT_ASSIST_MAX_BATCH_CHUNKS.get();
+        int maxBatch = remoteWorkers
+                ? Math.min(MapAccelConfig.CLIENT_ASSIST_MAX_BATCH_CHUNKS.get(), MapAccelConfig.REMOTE_WORKER_MAX_BATCH_CHUNKS.get())
+                : MapAccelConfig.CLIENT_ASSIST_MAX_BATCH_CHUNKS.get();
         int offset = 0;
         int assistantIndex = 0;
         PreviewMode mode = PreviewComputer.modeFor(level.dimension().location());
@@ -294,26 +304,46 @@ public final class MapAccelServer {
                 chunkZs[i] = pos.z;
             }
             long requestId = MapAccelServerState.PREVIEW_ASSIST.nextRequestId();
-            PreviewAssistRequestPacket packet = new PreviewAssistRequestPacket(
-                    requestId,
-                    level.dimension().location().toString(),
-                    level.getSeed(),
-                    mode.name(),
-                    chunkXs,
-                    chunkZs
-            );
-            ServerPlayer assistant = assistants.get(assistantIndex % assistants.size());
-            MapAccelNetwork.send(PacketDistributor.PLAYER.with(() -> assistant), packet);
-            MapAccelServerState.PREVIEW_ASSIST.requested(
-                    requestId,
-                    assistant.getUUID(),
-                    level.dimension().location(),
-                    level.getSeed(),
-                    mode,
-                    chunkXs,
-                    chunkZs,
-                    ServerLifecycleHooks.getCurrentServer().getTickCount()
-            );
+            if (remoteWorkers) {
+                MapAccelServerState.PREVIEW_ASSIST.requestedRemote(
+                        requestId,
+                        level.dimension().location(),
+                        level.getSeed(),
+                        mode,
+                        chunkXs,
+                        chunkZs,
+                        ServerLifecycleHooks.getCurrentServer().getTickCount()
+                );
+                RemoteWorkerGateway.enqueue(new RemoteWorkerGateway.PreviewTask(
+                        requestId,
+                        level.dimension().location().toString(),
+                        level.getSeed(),
+                        mode.name(),
+                        chunkXs,
+                        chunkZs
+                ));
+            } else {
+                PreviewAssistRequestPacket packet = new PreviewAssistRequestPacket(
+                        requestId,
+                        level.dimension().location().toString(),
+                        level.getSeed(),
+                        mode.name(),
+                        chunkXs,
+                        chunkZs
+                );
+                ServerPlayer assistant = assistants.get(assistantIndex % assistants.size());
+                MapAccelNetwork.send(PacketDistributor.PLAYER.with(() -> assistant), packet);
+                MapAccelServerState.PREVIEW_ASSIST.requested(
+                        requestId,
+                        assistant.getUUID(),
+                        level.dimension().location(),
+                        level.getSeed(),
+                        mode,
+                        chunkXs,
+                        chunkZs,
+                        ServerLifecycleHooks.getCurrentServer().getTickCount()
+                );
+            }
             offset += count;
             assistantIndex++;
         }
@@ -434,8 +464,9 @@ public final class MapAccelServer {
             DirtyChunkTracker.DirtySummary dirtySummary = dirtyTracker.summary();
             PreviewAssistLedger.Stats assistStats = MapAccelServerState.PREVIEW_ASSIST.snapshotAndReset();
             HotChunkCache.Stats hotStats = hotChunkCache.snapshotAndReset();
+            RemoteWorkerGateway.Stats remoteStats = RemoteWorkerGateway.snapshotAndReset();
             MapAccel.LOGGER.info(
-                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} previewAssistRequested={} previewAssistReceived={} previewAssistAccepted={} previewAssistApplied={} previewAssistCache={} hotPinned={} hotRefreshed={} hotReleased={} hotHits={} hotRetained={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
+                    "MapAccel chunk requests: planned={} requested={} skippedLoaded={} requestedPerSec={} estimatedDiskWriteKb={} maxSpeedBpt={} estimatedTps={} syncBudgetLeft={} surfacePreviews={} previewCache={} previewAssistRequested={} previewAssistReceived={} previewAssistAccepted={} previewAssistApplied={} previewAssistCache={} remoteWorkerEnabled={} remoteWorkerQueued={} remoteWorkerCompleted={} remoteWorkerRejected={} remoteWorkerPort={} hotPinned={} hotRefreshed={} hotReleased={} hotHits={} hotRetained={} dirtySeen={} dirtyTotal={} largeDirty={} snapshots={} snapshotHits={} gpuWarmups={} gpuBackend={} gpuComputeRequests={} gpuComputed={} gpuComputeMs={} activePlayers={} gpuDetail={}",
                     plannedChunksWindow,
                     requestedChunksWindow,
                     skippedLoadedChunksWindow,
@@ -451,6 +482,11 @@ public final class MapAccelServer {
                     assistStats.acceptedChunks(),
                     previewAssistAppliedWindow,
                     assistStats.cachedChunks(),
+                    remoteStats.enabled(),
+                    remoteStats.queuedTasks(),
+                    remoteStats.completedChunks(),
+                    remoteStats.rejectedTasks(),
+                    remoteStats.port(),
                     hotStats.pinned(),
                     hotStats.refreshed(),
                     hotStats.released(),
