@@ -15,6 +15,9 @@ public final class ClientPreviewWorker {
     }
 
     public static void handle(PreviewAssistRequestPacket packet) {
+        if (ClientRelayGateway.enqueue(packet)) {
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || !minecraft.level.dimension().location().toString().equals(packet.dimension())) {
             sendEmpty(packet);

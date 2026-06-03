@@ -1,4 +1,4 @@
-package com.shamoji.mapaccel.server;
+package com.shamoji.mapaccel.client;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -6,73 +6,62 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.shamoji.mapaccel.MapAccel;
 import com.shamoji.mapaccel.config.MapAccelConfig;
+import com.shamoji.mapaccel.net.MapAccelNetwork;
+import com.shamoji.mapaccel.net.PreviewAssistRequestPacket;
 import com.shamoji.mapaccel.net.PreviewAssistResultPacket;
-import com.shamoji.mapaccel.preview.PreviewMode;
+import com.shamoji.mapaccel.server.RemoteWorkerGateway;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.MinecraftServer;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.Inet4Address;
-import java.net.Inet6Address;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.Base64;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 
-public final class RemoteWorkerGateway {
+public final class ClientRelayGateway {
     private static final Gson GSON = new Gson();
     private static final Object LOCK = new Object();
-    private static final ArrayDeque<PreviewTask> TASKS = new ArrayDeque<>();
+    private static final ArrayDeque<PreviewAssistRequestPacket> TASKS = new ArrayDeque<>();
     private static HttpServer httpServer;
-    private static MinecraftServer minecraftServer;
     private static String accessToken;
-    private static int completedWindow;
-    private static int rejectedWindow;
+    private static long lastWorkerPollNanos;
 
-    private RemoteWorkerGateway() {
+    private ClientRelayGateway() {
     }
 
-    public static void ensureStarted(MinecraftServer server) {
-        if (!MapAccelConfig.REMOTE_WORKER_ENABLED.get()) {
+    public static void ensureStarted() {
+        if (!MapAccelConfig.CLIENT_RELAY_ENABLED.get()) {
             stop();
             return;
         }
         if (httpServer != null) {
-            minecraftServer = server;
             return;
         }
-        minecraftServer = server;
         try {
             accessToken = configuredOrGeneratedToken();
-            InetSocketAddress address = new InetSocketAddress(MapAccelConfig.REMOTE_WORKER_BIND_ADDRESS.get(), MapAccelConfig.REMOTE_WORKER_PORT.get());
+            InetSocketAddress address = new InetSocketAddress(MapAccelConfig.CLIENT_RELAY_BIND_ADDRESS.get(), MapAccelConfig.CLIENT_RELAY_PORT.get());
             httpServer = HttpServer.create(address, 0);
-            httpServer.createContext("/", RemoteWorkerGateway::handleIndex);
-            httpServer.createContext("/task", RemoteWorkerGateway::handleTask);
-            httpServer.createContext("/result", RemoteWorkerGateway::handleResult);
+            httpServer.createContext("/", ClientRelayGateway::handleIndex);
+            httpServer.createContext("/task", ClientRelayGateway::handleTask);
+            httpServer.createContext("/result", ClientRelayGateway::handleResult);
             httpServer.setExecutor(Executors.newCachedThreadPool(runnable -> {
-                Thread thread = new Thread(runnable, "MapAccel Remote Worker");
+                Thread thread = new Thread(runnable, "MapAccel Client Relay");
                 thread.setDaemon(true);
                 return thread;
             }));
             httpServer.start();
-            MapAccel.LOGGER.info("MapAccel remote worker gateway listening on {}", workerUrlHint());
+            MapAccel.LOGGER.info("MapAccel client relay listening on {}", relayUrlHint());
         } catch (IOException | RuntimeException ex) {
             httpServer = null;
-            MapAccel.LOGGER.warn("Failed to start MapAccel remote worker gateway", ex);
+            MapAccel.LOGGER.warn("Failed to start MapAccel client relay", ex);
         }
     }
 
@@ -81,44 +70,36 @@ public final class RemoteWorkerGateway {
             httpServer.stop(0);
             httpServer = null;
         }
-        minecraftServer = null;
         synchronized (LOCK) {
             TASKS.clear();
         }
     }
 
-    public static boolean available() {
-        return httpServer != null;
-    }
-
-    public static void enqueue(PreviewTask task) {
-        if (!available()) {
-            return;
+    public static boolean enqueue(PreviewAssistRequestPacket packet) {
+        if (httpServer == null || !hasRecentWorker()) {
+            return false;
         }
         synchronized (LOCK) {
-            int limit = MapAccelConfig.REMOTE_WORKER_QUEUE_LIMIT.get();
+            int limit = MapAccelConfig.CLIENT_RELAY_QUEUE_LIMIT.get();
             while (TASKS.size() >= limit) {
                 TASKS.pollFirst();
-                rejectedWindow++;
             }
-            TASKS.addLast(task);
+            TASKS.addLast(packet);
         }
+        return true;
     }
 
-    public static Stats snapshotAndReset() {
-        synchronized (LOCK) {
-            Stats stats = new Stats(TASKS.size(), completedWindow, rejectedWindow, available(), MapAccelConfig.REMOTE_WORKER_PORT.get());
-            completedWindow = 0;
-            rejectedWindow = 0;
-            return stats;
-        }
+    private static boolean hasRecentWorker() {
+        long lastPoll = lastWorkerPollNanos;
+        return lastPoll != 0L && System.nanoTime() - lastPoll <= 10_000_000_000L;
     }
 
-    public static String workerUrlHint() {
+    private static String relayUrlHint() {
         if (accessToken == null) {
             return "disabled";
         }
-        return "http://" + hostForUrl(displayHost(MapAccelConfig.REMOTE_WORKER_BIND_ADDRESS.get())) + ":" + MapAccelConfig.REMOTE_WORKER_PORT.get() + "/?token=" + accessToken;
+        String host = RemoteWorkerGateway.displayHost(MapAccelConfig.CLIENT_RELAY_BIND_ADDRESS.get());
+        return "http://" + RemoteWorkerGateway.hostForUrl(host) + ":" + MapAccelConfig.CLIENT_RELAY_PORT.get() + "/?token=" + accessToken;
     }
 
     private static void handleIndex(HttpExchange exchange) throws IOException {
@@ -138,7 +119,8 @@ public final class RemoteWorkerGateway {
             send(exchange, 405, "application/json", "{\"error\":\"method\"}");
             return;
         }
-        PreviewTask task;
+        lastWorkerPollNanos = System.nanoTime();
+        PreviewAssistRequestPacket task;
         synchronized (LOCK) {
             task = TASKS.pollFirst();
         }
@@ -146,7 +128,7 @@ public final class RemoteWorkerGateway {
             send(exchange, 200, "application/json", "{\"task\":\"idle\"}");
             return;
         }
-        send(exchange, 200, "application/json", GSON.toJson(task.toJson()));
+        send(exchange, 200, "application/json", GSON.toJson(toJson(task)));
     }
 
     private static void handleResult(HttpExchange exchange) throws IOException {
@@ -158,25 +140,33 @@ public final class RemoteWorkerGateway {
             send(exchange, 405, "application/json", "{\"error\":\"method\"}");
             return;
         }
-        MinecraftServer server = minecraftServer;
-        if (server == null) {
-            send(exchange, 503, "application/json", "{\"error\":\"server\"}");
-            return;
-        }
         try (InputStream input = exchange.getRequestBody()) {
             JsonObject json = JsonParser.parseString(new String(input.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
-            PreviewAssistResultPacket packet = packetFromJson(json);
-            server.execute(() -> MapAccelServerState.PREVIEW_ASSIST.acceptRemote(packet, server.getTickCount()));
-            synchronized (LOCK) {
-                completedWindow += packet.count();
-            }
+            MapAccelNetwork.sendToServer(packetFromJson(json));
             send(exchange, 200, "application/json", "{\"ok\":true}");
         } catch (RuntimeException ex) {
-            synchronized (LOCK) {
-                rejectedWindow++;
-            }
             send(exchange, 400, "application/json", "{\"error\":\"bad_result\"}");
         }
+    }
+
+    private static JsonObject toJson(PreviewAssistRequestPacket task) {
+        JsonObject json = new JsonObject();
+        json.addProperty("task", "preview");
+        json.addProperty("requestId", task.requestId());
+        json.addProperty("dimension", task.dimension());
+        json.addProperty("seed", Long.toString(task.seed()));
+        json.addProperty("mode", task.mode());
+        JsonArray xs = new JsonArray();
+        JsonArray zs = new JsonArray();
+        for (int chunkX : task.chunkXs()) {
+            xs.add(chunkX);
+        }
+        for (int chunkZ : task.chunkZs()) {
+            zs.add(chunkZ);
+        }
+        json.add("chunkXs", xs);
+        json.add("chunkZs", zs);
+        return json;
     }
 
     private static PreviewAssistResultPacket packetFromJson(JsonObject json) {
@@ -248,7 +238,7 @@ public final class RemoteWorkerGateway {
     }
 
     private static String configuredOrGeneratedToken() {
-        String configured = MapAccelConfig.REMOTE_WORKER_ACCESS_TOKEN.get();
+        String configured = MapAccelConfig.CLIENT_RELAY_ACCESS_TOKEN.get();
         if (configured != null && !configured.isBlank()) {
             return configured;
         }
@@ -257,62 +247,14 @@ public final class RemoteWorkerGateway {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    public static String displayHost(String bindAddress) {
-        if (bindAddress != null && !bindAddress.isBlank() && !isWildcard(bindAddress)) {
-            return bindAddress;
-        }
-        String siteLocal = null;
-        String fallback = null;
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            while (interfaces.hasMoreElements()) {
-                NetworkInterface networkInterface = interfaces.nextElement();
-                if (!networkInterface.isUp() || networkInterface.isLoopback() || networkInterface.isVirtual()) {
-                    continue;
-                }
-                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    InetAddress address = addresses.nextElement();
-                    if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()) {
-                        continue;
-                    }
-                    if (address instanceof Inet4Address) {
-                        if (address.isSiteLocalAddress()) {
-                            siteLocal = address.getHostAddress();
-                            break;
-                        }
-                        if (fallback == null) {
-                            fallback = address.getHostAddress();
-                        }
-                    } else if (fallback == null && address instanceof Inet6Address) {
-                        fallback = address.getHostAddress();
-                    }
-                }
-                if (siteLocal != null) {
-                    break;
-                }
-            }
-        } catch (SocketException ignored) {
-        }
-        return siteLocal != null ? siteLocal : fallback != null ? fallback : "127.0.0.1";
-    }
-
-    public static String hostForUrl(String host) {
-        return host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
-    }
-
-    private static boolean isWildcard(String address) {
-        return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address) || "*".equals(address);
-    }
-
     private static String workerPage() {
         return """
                 <!doctype html>
-                <html lang=\"ja\">
+                <html lang=\"en\">
                 <head>
                   <meta charset=\"utf-8\">
                   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-                  <title>MapAccel Worker</title>
+                  <title>MapAccel Client Relay Worker</title>
                   <style>
                     body{font-family:system-ui,sans-serif;margin:24px;line-height:1.45;background:#101418;color:#eef3f7}
                     code{background:#202832;padding:2px 5px;border-radius:4px}
@@ -321,9 +263,9 @@ public final class RemoteWorkerGateway {
                   </style>
                 </head>
                 <body>
-                  <h1>MapAccel Worker</h1>
-                  <p>この端末を MapAccel の preview 計算に使います。スマホ/タブレットは充電しながらの使用を推奨します。</p>
-                  <p>状態: <span id=\"state\">starting</span></p>
+                  <h1>MapAccel Client Relay Worker</h1>
+                  <p>This device helps MapAccel preview computation through the Minecraft client relay.</p>
+                  <p>Status: <span id=\"state\">starting</span></p>
                   <p class=\"stat\"><span id=\"chunks\">0</span> chunks</p>
                   <button id=\"start\">Start</button><button id=\"stop\">Stop</button>
                   <pre id=\"log\"></pre>
@@ -333,7 +275,7 @@ public final class RemoteWorkerGateway {
                 const state = document.getElementById('state');
                 const count = document.getElementById('chunks');
                 const log = document.getElementById('log');
-                document.getElementById('start').onclick = () => { running = true; loop(); };
+                document.getElementById('start').onclick = () => { if(!running){ running = true; loop(); } };
                 document.getElementById('stop').onclick = () => { running = false; state.textContent = 'stopped'; };
                 function line(s){ log.textContent = new Date().toLocaleTimeString() + ' ' + s + '\\n' + log.textContent.slice(0, 3000); }
                 function asLong(n){ return BigInt.asIntN(64, n); }
@@ -368,7 +310,7 @@ public final class RemoteWorkerGateway {
                       state.textContent = 'polling';
                       const r = await fetch('/task?token=' + encodeURIComponent(token), {cache:'no-store'});
                       const task = await r.json();
-                      if(task.task === 'idle'){ await new Promise(res=>setTimeout(res, 600)); continue; }
+                      if(task.task === 'idle'){ await new Promise(res=>setTimeout(res, 500)); continue; }
                       state.textContent = 'computing';
                       const result = compute(task);
                       await fetch('/result?token=' + encodeURIComponent(token), {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(result)});
@@ -381,30 +323,5 @@ public final class RemoteWorkerGateway {
                 </body>
                 </html>
                 """;
-    }
-
-    public record PreviewTask(long requestId, String dimension, long seed, String mode, int[] chunkXs, int[] chunkZs) {
-        JsonObject toJson() {
-            JsonObject json = new JsonObject();
-            json.addProperty("task", "preview");
-            json.addProperty("requestId", requestId);
-            json.addProperty("dimension", dimension);
-            json.addProperty("seed", Long.toString(seed));
-            json.addProperty("mode", mode);
-            JsonArray xs = new JsonArray();
-            JsonArray zs = new JsonArray();
-            for (int chunkX : chunkXs) {
-                xs.add(chunkX);
-            }
-            for (int chunkZ : chunkZs) {
-                zs.add(chunkZ);
-            }
-            json.add("chunkXs", xs);
-            json.add("chunkZs", zs);
-            return json;
-        }
-    }
-
-    public record Stats(int queuedTasks, int completedChunks, int rejectedTasks, boolean enabled, int port) {
     }
 }

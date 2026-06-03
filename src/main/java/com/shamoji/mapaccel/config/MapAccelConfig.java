@@ -70,6 +70,11 @@ public final class MapAccelConfig {
     public static final ForgeConfigSpec.BooleanValue LOG_RESOURCE_SUMMARY;
     public static final ForgeConfigSpec.BooleanValue STABILIZE_CREATIVE_FLIGHT_FOV;
     public static final ForgeConfigSpec.BooleanValue PATCH_EMBEDDIUM_DEPTH_COMPAT;
+    public static final ForgeConfigSpec.BooleanValue CLIENT_RELAY_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> CLIENT_RELAY_BIND_ADDRESS;
+    public static final ForgeConfigSpec.IntValue CLIENT_RELAY_PORT;
+    public static final ForgeConfigSpec.ConfigValue<String> CLIENT_RELAY_ACCESS_TOKEN;
+    public static final ForgeConfigSpec.IntValue CLIENT_RELAY_QUEUE_LIMIT;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -154,6 +159,11 @@ public final class MapAccelConfig {
         builder.push("client");
         STABILIZE_CREATIVE_FLIGHT_FOV = builder.comment("Keep FOV stable while creative flight speed mods repeatedly adjust flying speed.").define("stabilizeCreativeFlightFov", true);
         PATCH_EMBEDDIUM_DEPTH_COMPAT = builder.comment("Patch Embeddium/Rubidium client options that can spam GL_INVALID_OPERATION depth-format errors during aggressive chunk updates.").define("patchEmbeddiumDepthCompat", true);
+        CLIENT_RELAY_ENABLED = builder.comment("Start a token-protected LAN relay on Minecraft clients so phones/tablets can assist through that client.").define("clientRelayEnabled", true);
+        CLIENT_RELAY_BIND_ADDRESS = builder.comment("Bind address for the client relay. 0.0.0.0 listens on LAN, but the shown URL uses a real local IP.").define("clientRelayBindAddress", "0.0.0.0");
+        CLIENT_RELAY_PORT = builder.comment("TCP port for the client relay. It defaults away from the server gateway port so integrated worlds can run both.").defineInRange("clientRelayPort", 8766, 1024, 65535);
+        CLIENT_RELAY_ACCESS_TOKEN = builder.comment("Shared token for browser workers connecting to this client relay. Leave blank to generate a random token each client start.").define("clientRelayAccessToken", "");
+        CLIENT_RELAY_QUEUE_LIMIT = builder.comment("Maximum queued preview batches waiting for browser workers connected to this client relay.").defineInRange("clientRelayQueueLimit", 512, 1, 10000);
         builder.pop();
 
         SPEC = builder.build();

@@ -16,6 +16,7 @@ public final class MapAccelClient {
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
             EmbeddiumDepthCompat.patchIfNeeded();
+            ClientRelayGateway.ensureStarted();
             MinecraftForge.EVENT_BUS.register(new ClientMetricsReporter());
             MinecraftForge.EVENT_BUS.register(new CreativeFlightFovStabilizer());
         });
