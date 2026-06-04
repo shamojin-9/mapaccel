@@ -98,8 +98,7 @@ public final class ClientRelayGateway {
         if (accessToken == null) {
             return "disabled";
         }
-        String host = RemoteWorkerGateway.displayHost(MapAccelConfig.CLIENT_RELAY_BIND_ADDRESS.get());
-        return "http://" + RemoteWorkerGateway.hostForUrl(host) + ":" + MapAccelConfig.CLIENT_RELAY_PORT.get() + "/?token=" + accessToken;
+        return RemoteWorkerGateway.urlHints(MapAccelConfig.CLIENT_RELAY_BIND_ADDRESS.get(), MapAccelConfig.CLIENT_RELAY_PORT.get(), accessToken);
     }
 
     private static void handleIndex(HttpExchange exchange) throws IOException {

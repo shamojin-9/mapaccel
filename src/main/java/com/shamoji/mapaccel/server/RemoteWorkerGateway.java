@@ -26,10 +26,14 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
@@ -118,7 +122,7 @@ public final class RemoteWorkerGateway {
         if (accessToken == null) {
             return "disabled";
         }
-        return "http://" + hostForUrl(displayHost(MapAccelConfig.REMOTE_WORKER_BIND_ADDRESS.get())) + ":" + MapAccelConfig.REMOTE_WORKER_PORT.get() + "/?token=" + accessToken;
+        return urlHints(MapAccelConfig.REMOTE_WORKER_BIND_ADDRESS.get(), MapAccelConfig.REMOTE_WORKER_PORT.get(), accessToken);
     }
 
     private static void handleIndex(HttpExchange exchange) throws IOException {
@@ -258,11 +262,17 @@ public final class RemoteWorkerGateway {
     }
 
     public static String displayHost(String bindAddress) {
+        return displayHosts(bindAddress).get(0);
+    }
+
+    public static List<String> displayHosts(String bindAddress) {
         if (bindAddress != null && !bindAddress.isBlank() && !isWildcard(bindAddress)) {
-            return bindAddress;
+            return List.of(bindAddress);
         }
-        String siteLocal = null;
-        String fallback = null;
+        Set<String> tailscale = new LinkedHashSet<>();
+        Set<String> privateHosts = new LinkedHashSet<>();
+        Set<String> ulaHosts = new LinkedHashSet<>();
+        Set<String> globalHosts = new LinkedHashSet<>();
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             while (interfaces.hasMoreElements()) {
@@ -277,24 +287,39 @@ public final class RemoteWorkerGateway {
                         continue;
                     }
                     if (address instanceof Inet4Address) {
-                        if (address.isSiteLocalAddress()) {
-                            siteLocal = address.getHostAddress();
-                            break;
+                        if (isTailscaleIpv4(address)) {
+                            tailscale.add(address.getHostAddress());
+                        } else if (isPrivateIpv4(address)) {
+                            privateHosts.add(address.getHostAddress());
+                        } else {
+                            globalHosts.add(address.getHostAddress());
                         }
-                        if (fallback == null) {
-                            fallback = address.getHostAddress();
-                        }
-                    } else if (fallback == null && address instanceof Inet6Address) {
-                        fallback = address.getHostAddress();
+                    } else if (address instanceof Inet6Address && isUniqueLocalIpv6(address)) {
+                        ulaHosts.add(address.getHostAddress());
+                    } else if (address instanceof Inet6Address) {
+                        globalHosts.add(address.getHostAddress());
                     }
-                }
-                if (siteLocal != null) {
-                    break;
                 }
             }
         } catch (SocketException ignored) {
         }
-        return siteLocal != null ? siteLocal : fallback != null ? fallback : "127.0.0.1";
+        ArrayList<String> hosts = new ArrayList<>(tailscale.size() + privateHosts.size() + ulaHosts.size() + globalHosts.size() + 1);
+        hosts.addAll(tailscale);
+        hosts.addAll(privateHosts);
+        hosts.addAll(ulaHosts);
+        hosts.addAll(globalHosts);
+        if (hosts.isEmpty()) {
+            hosts.add("127.0.0.1");
+        }
+        return hosts;
+    }
+
+    public static String urlHints(String bindAddress, int port, String token) {
+        List<String> urls = new ArrayList<>();
+        for (String host : displayHosts(bindAddress)) {
+            urls.add("http://" + hostForUrl(host) + ":" + port + "/?token=" + token);
+        }
+        return String.join(" , ", urls);
     }
 
     public static String hostForUrl(String host) {
@@ -303,6 +328,27 @@ public final class RemoteWorkerGateway {
 
     private static boolean isWildcard(String address) {
         return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address) || "*".equals(address);
+    }
+
+    private static boolean isTailscaleIpv4(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        int first = bytes[0] & 0xFF;
+        int second = bytes[1] & 0xFF;
+        return first == 100 && second >= 64 && second <= 127;
+    }
+
+    private static boolean isPrivateIpv4(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        int first = bytes[0] & 0xFF;
+        int second = bytes[1] & 0xFF;
+        return first == 10
+                || first == 192 && second == 168
+                || first == 172 && second >= 16 && second <= 31;
+    }
+
+    private static boolean isUniqueLocalIpv6(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        return (bytes[0] & 0xFE) == 0xFC;
     }
 
     private static String workerPage() {
