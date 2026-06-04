@@ -259,6 +259,7 @@ public final class ClientRelayGateway {
                     code{background:#202832;padding:2px 5px;border-radius:4px}
                     .stat{font-size:32px;font-weight:700}
                     button{font:inherit;padding:10px 14px;margin-right:8px}
+                    pre{max-height:45vh;overflow:auto;background:#0b0f13;padding:12px;border-radius:6px;white-space:pre-wrap}
                   </style>
                 </head>
                 <body>
@@ -276,7 +277,12 @@ public final class ClientRelayGateway {
                 const log = document.getElementById('log');
                 document.getElementById('start').onclick = () => { if(!running){ running = true; loop(); } };
                 document.getElementById('stop').onclick = () => { running = false; state.textContent = 'stopped'; };
-                function line(s){ log.textContent = new Date().toLocaleTimeString() + ' ' + s + '\\n' + log.textContent.slice(0, 3000); }
+                function line(s){
+                  log.textContent += new Date().toLocaleTimeString() + ' ' + s + '\\n';
+                  const lines = log.textContent.split('\\n');
+                  if(lines.length > 160) log.textContent = lines.slice(lines.length - 160).join('\\n');
+                  log.scrollTop = log.scrollHeight;
+                }
                 function asLong(n){ return BigInt.asIntN(64, n); }
                 function ushr(n,b){ return BigInt.asUintN(64, n) >> BigInt(b); }
                 function previewHeight(seed, x, z, mode){
@@ -303,13 +309,18 @@ public final class ClientRelayGateway {
                   }
                   return {requestId:task.requestId, dimension:task.dimension, seed:String(task.seed), mode:task.mode, chunks:out};
                 }
+                function isPreviewTask(task){
+                  return task && task.task === 'preview' && Array.isArray(task.chunkXs) && Array.isArray(task.chunkZs);
+                }
                 async function loop(){
                   while(running){
                     try{
                       state.textContent = 'polling';
                       const r = await fetch('/task?token=' + encodeURIComponent(token), {cache:'no-store'});
                       const task = await r.json();
+                      if(!r.ok){ state.textContent = 'auth/error'; line(task.error || ('http ' + r.status)); await new Promise(res=>setTimeout(res, 1500)); continue; }
                       if(task.task === 'idle'){ await new Promise(res=>setTimeout(res, 500)); continue; }
+                      if(!isPreviewTask(task)){ state.textContent = 'bad task'; line('ignored task: ' + JSON.stringify(task).slice(0, 180)); await new Promise(res=>setTimeout(res, 800)); continue; }
                       state.textContent = 'computing';
                       const result = compute(task);
                       await fetch('/result?token=' + encodeURIComponent(token), {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(result)});
